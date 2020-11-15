@@ -8,10 +8,10 @@
     https://ctf.hacker101.com/ctf
     
     o Open to clarify
+        [x] Create links on one instance and test on new instances => nothing found, but 404
         [ ] tracking.gif (main and result page)
         [ ] Generate own links when encryption key available
-        [ ] Create links on one instance and test on new instances
-        [ ] Padding oracle for encryption
+        [x] Padding oracle for encryption => got flag 2
 
     o URLs
         o root /
@@ -126,20 +126,29 @@ from Crypto.Cipher import AES
 from urlparse import urlparse, parse_qs
 
 # Base url of Hacker101 challenge
-base_url = "http://35.227.24.107/a33e0e1eeb/"
+base_url = "http://35.190.155.168/1c7825c0ab/"
 
 
 def unpad(data):
     """Remove padding bytes using PCKS#7"""
-    num_padding_bytes = data[-1]
+    num_padding_bytes = ord(data[-1])
 
     # Check if data is consistent with PCKS#7
     for i in range(len(data) - num_padding_bytes, len(data)):
-        if data[i] is not num_padding_bytes:
+        if ord(data[i]) is not num_padding_bytes:
             raise Exception("Error occured! Incorrect padding.")
 
     return data[:-num_padding_bytes]
 
+def pad(data, block_size):
+    """Add padding bytes using PCKS#7"""
+    num_padding_bytes = block_size - len(data) % block_size
+
+    # Full block of padding bytes is expected if data alreadyis multiple of block_size
+    if num_padding_bytes == 0:
+        num_padding_bytes += block_size
+
+    return data + chr(num_padding_bytes) * num_padding_bytes
 
 def str_to_int(val):
     """Nice formatting of integer numbers"""
@@ -187,6 +196,18 @@ def change_byte_at_index(data, index, byte):
     return data[:index] + chr(byte) + data[index+1:]
 
 
+def split_into_blocks(data, block_size):
+    """Split string into multiple blocks"""
+
+    blocks = []
+
+    for i in range(len(data) / block_size):
+        cur_block = data[i * block_size : (i + 1) * block_size]
+        blocks.append(cur_block)
+
+    return blocks
+
+
 def padding_oracle(data, block_size = 16):
     """CBC padding oracle 
     
@@ -197,16 +218,11 @@ def padding_oracle(data, block_size = 16):
     # Data preparation
     #################################################################
 
-    # Decode data
+    # Decode input data
     cipher_text = decode_data(data)
 
     # Split cipher text into blocks    
-    len_cipher_text = len(cipher_text)
-    cipher_blocks = []
-    for i in range(len_cipher_text / block_size):
-        cur_block = cipher_text[i * block_size : (i + 1) * block_size]
-        cipher_blocks.append(cur_block)
-
+    cipher_blocks = split_into_blocks(cipher_text, block_size)
 
     #################################################################
     # Guess the bytes of each block
@@ -228,7 +244,7 @@ def padding_oracle(data, block_size = 16):
         num_padding_bytes = 0
         for index in range(block_size - num_padding_bytes - 1, -1, -1):
 
-            print("Guessing block {} byte [{}]".format(block_id, index))
+            print("Guessing block {} byte {} ...".format(block_id + 1, index))
             # Pretent to have more padding bytes
             cur_num_padding_bytes = num_padding_bytes + (block_size - num_padding_bytes - index) 
         
@@ -267,7 +283,6 @@ def padding_oracle(data, block_size = 16):
             
                 # Check if PaddingException() occurs
                 if "PaddingException()" not in response.text:
-                    print(response.text)
                     # Do the math to get the actual plaintext value by having a valid plain text byte and related IV byte
                     plain_text_value = cur_num_padding_bytes ^ value ^ ord(cipher_blocks[block_id][index])
                     plain_text.insert(0, plain_text_value) 
@@ -275,19 +290,24 @@ def padding_oracle(data, block_size = 16):
                     print("")
                     print("Success!")
                     print("")
-                    print("Plain text (hex) = {}{}".format("?? " * (block_size - len(plain_text)), " ".join("%02x " % x for x in plain_text)))
-                    print("Plain text       = {}".format( "".join( chr(x) for x in plain_text)))
+                    print("Plain text (hex) = {}".format(" ".join("%02x " % x for x in plain_text)))
+                    print("Plain text       = {}".format( "".join( chr(x) for x in plain_text).replace('\n','\\n')))
                     print("")
                     break        
 
     # Debug print of cipher blocks
+    print_blocks(cipher_blocks)
+
+    return "".join( chr(x) for x in plain_text)
+
+
+def print_blocks(blocks):
     print("Cipher text blocks:")
-    for i, block in enumerate(cipher_blocks):
+    for i, block in enumerate(blocks):
         # @todo: Print related plaintext to each block
         print("Block[{}]: {} {}".format(i, str_to_hex(block), " <- IV" if (i==0) else ""))            
     print ("")
 
-    pass
 
 # Call  decryptPayload(post['key'], body):
 def decryptPayload(key, body):
@@ -326,18 +346,70 @@ def evaluate_data(data):
 def get_flag_0():
     """Get flag 0 by any invalid input data"""
 
+
     data = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
     response = evaluate_data(data[1:])
-    print( response.text )
+    print("Flag 0: " + str.splitlines(response.text.encode("utf-8"))[0] )
+
+
+def XOR_byte_list(a, b):
+    """XOR two byte lists"""
+
+    return "".join([ chr(ord(a_i) ^ ord(b_i)) for (a_i,b_i) in zip(a, b) ])
+
 
 def get_flag_1():
-    """Get flag 1 with padding oracle attack"""
+    """Get flag 1 with padding oracle decryption attack"""
+
+    block_size = 16
+    data = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
 
     # Run the actual padding oracle attack
-    data = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
-    padding_oracle(data)
-
+    plain_text = padding_oracle(data, block_size)
+    print("Flag 1: " + plain_text)
+    
     # Will return {"flag": "^FLAG^xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx$FLAG$", "id": "2", "key": "V!FLXKt9eRXcWBH7D2uSJA~~"}
+
+
+def get_flag_2():
+    """Get flag 1 with padding oracle encryption attack"""
+
+    block_size = 16
+    data = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
+    # Original plain text etrieved from flag 1
+    plain_text_original    = '{"flag": "^FLAG^df5c054ecc024dbb292715f47321b2c1ca10b711ad70fcd624ba712e2c5cd280$FLAG$", "id": "2", "key": "V!FLXKt9eRXcWBH7D2uSJA~~"}'
+    plain_text_manipulated = '{"id": "1"}'
+
+    #################################################################
+    # Data preparation
+    #################################################################
+
+    # Decode input data
+    cipher_text = decode_data(data)
+
+    # Split cipher text into blocks    
+    cipher_blocks = split_into_blocks(cipher_text, block_size)
+
+    # Limit plain text to 15 characters, because we need at least 1 padding byte
+    if len(plain_text_manipulated) >= 15:
+        raise Exception("Error occurred! len(plain_text_manipulated) >= 16 is not implemented yet. ")
+
+    # Add padding bytes
+    plain_text_manipulated = pad(plain_text_manipulated, block_size)
+    
+    # Manipulate IV to get the desired plain text    
+    # IV(manipulated) = IV XOR plaintext(original) XOR plaintext(manipulated)
+    iv_original = cipher_blocks[0]
+    iv_manipulated = XOR_byte_list( XOR_byte_list( iv_original, plain_text_original[:16] ), plain_text_manipulated )
+
+    # Use only first cipher text blocks for now
+    cipher_text_manipulated = iv_manipulated + cipher_blocks[1]
+
+    # Send the changed data to server and check response
+    response = evaluate_data( encode_data(cipher_text_manipulated) )
+
+    print(response.text)
+
 
 def create_links_to_file(filename, title, body, count):
     """Create pages and store 'post' parameter to file"""
@@ -368,12 +440,12 @@ def read_links_from_file(filename):
     # Evaluate posts
     with open(filename + ".result", 'w') as file: 
         for post in tqdm(posts):       
-            response = evaluate_data(post)        
+            # response = evaluate_data(post)        
+
+            plain_text = padding_oracle(post)
+
             file.write("post={}".format(post))
-            file.write("\n")
-            file.write(response.text) 
-            file.write("\n")
-            file.write("##################################################################\n")
+            file.write(plain_text) 
             file.write("\n")
 
 def test_de_encoding():
@@ -385,16 +457,25 @@ def test_de_encoding():
     if enc_data != data:
         raise Exception("Error in encoding or decoding function.")
 
+
+def test_un_padding():
+    """Test decode and encode functionality"""
+
+    block_size = 16
+    data = "x" * (block_size / 2)
+    pad_data = pad(data, block_size)
+    unpadded_data = unpad(pad_data)
+    if len(pad_data) == block_size and unpadded_data != data:
+        raise Exception("Error in unpadding or padding  function.")
+
+
 if __name__ == "__main__":
 
     # Initial tests
     test_de_encoding()
+    test_un_padding()
 
-    # Get the flags
     get_flag_0()
     get_flag_1()
+    get_flag_2()
 
-    # Testing reuse of codes in new instance
-    # filename = 'valid_post_parameter.txt'
-    # create_links_to_file(filename, "Title", "Body", 500)
-    # read_links_from_file(filename) 
